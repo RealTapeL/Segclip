@@ -1,12 +1,19 @@
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'FastSAM'))
+
+# Add local FastSAM to path
+fastsam_path = os.path.join(os.path.dirname(__file__), '..', '..', 'fastsam')
+sys.path.insert(0, fastsam_path)
 
 import torch
 import numpy as np
 from PIL import Image
+
+# Import FastSAM modules directly from local copy
 from fastsam import FastSAM, FastSAMPrompt
-from .base_segmentor import BaseSegmentor
+
+# Use absolute import for BaseSegmentor
+from src.segmentor.base_segmentor import BaseSegmentor
 
 class FastSAMAdapter(BaseSegmentor):
     def __init__(self, model_path, device='cuda', conf=0.4, iou=0.9):
