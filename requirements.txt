@@ -1,0 +1,5 @@
+fastsam
+matplotlib
+numpy
+Pillow
+torch
