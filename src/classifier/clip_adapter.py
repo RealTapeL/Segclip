@@ -3,11 +3,17 @@ import numpy as np
 from PIL import Image
 import os
 from .base_classifier import BaseClassifier
+import torch.nn.functional as F
+
+# 导入MemoryBank类
+from ..utils.memory_bank import MemoryBank
 
 class CLIPAdapter(BaseClassifier):
     def __init__(self, model_name='openai/clip-vit-base-patch16', device='cuda'):
         self.device = device
         self.model_name = model_name
+        # 初始化MemoryBank时传递设备参数
+        self.memory_bank = MemoryBank(capacity=1000, device=device)
         
         # Try to load using OpenAI CLIP first
         self.use_transformers = False
@@ -91,20 +97,59 @@ class CLIPAdapter(BaseClassifier):
                 # Process mask to correct format
                 mask = self._process_mask(mask, image.shape[0], image.shape[1])
                 
-                # Apply mask to image
-                masked_image = image * mask[..., np.newaxis]
+                # Apply multi-scale context enhancement
+                enhanced_image = self._enhance_with_context(image, mask)
                 
-                # Convert to PIL Image and preprocess
-                pil_image = Image.fromarray(masked_image.astype('uint8'))
+                # Multi-scale feature extraction
+                scale_scores = []
+                for scale_factor in [0.8, 1.0, 1.2]:
+                    scaled_image = self._scale_image(enhanced_image, scale_factor)
+                    score = self._get_clip_score(scaled_image, text_features, clip)
+                    scale_scores.append(score)
+                
+                # Ensemble scores from different scales
+                ensemble_scores = torch.mean(torch.stack(scale_scores), dim=0)
+                
+                # 使用记忆库增强分类
+                pil_image = Image.fromarray(enhanced_image.astype('uint8'))
                 processed_image = self.preprocess(pil_image).unsqueeze(0).to(self.device)
-                
-                # Get image features
                 image_features = self.model.encode_image(processed_image)
                 image_features /= image_features.norm(dim=-1, keepdim=True)
                 
-                # Calculate similarity
-                similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-                values, indices = similarity[0].topk(len(class_names))
+                # 从记忆库获取最近邻
+                memory_scores, memory_labels = self.memory_bank.get_nearest_neighbors(image_features, k=5)
+                combined_scores = ensemble_scores.clone()
+                
+                if memory_scores is not None and self.memory_bank.get_size() > 1:
+                    # 只有在记忆库中有足够数据时才进行聚类
+                    n_clusters = min(5, self.memory_bank.get_size())
+                    if n_clusters > 1:  # 只有在有足够的簇时才进行聚类
+                        cluster_result = self.memory_bank.cluster_features(n_clusters=n_clusters)
+                        if cluster_result is not None:
+                            cluster_centers, cluster_labels = cluster_result
+                            cluster_centers = torch.from_numpy(cluster_centers).float().to(self.device)
+                            cluster_features = cluster_centers / cluster_centers.norm(dim=-1, keepdim=True)
+                            
+                            # 计算与聚类中心的相似度
+                            cluster_similarities = 100.0 * image_features @ cluster_features.t()
+                            
+                            # 结合CLIP分数、记忆库分数和聚类分数
+                            for j, label in enumerate(cluster_labels):
+                                if label in class_names:
+                                    label_idx = class_names.index(label)
+                                    # 融合聚类分数（给予权重0.3）
+                                    combined_scores[label_idx] += 0.3 * cluster_similarities[0, j]
+                                    
+                            # 同时考虑最近邻的标签信息
+                            for labels_for_query in memory_labels:
+                                for label in labels_for_query:
+                                    if label in class_names:
+                                        label_idx = class_names.index(label)
+                                        # 给最近邻标签增加权重
+                                        combined_scores[label_idx] += 0.1
+                
+                combined_scores = F.softmax(combined_scores, dim=-1)
+                values, indices = combined_scores.topk(len(class_names))
                 
                 # Prepare result
                 scores_dict = {class_names[j]: float(values[j]) for j in range(len(class_names))}
@@ -116,6 +161,10 @@ class CLIPAdapter(BaseClassifier):
                     'confidence': float(values[0]),
                     'object_id': i
                 })
+                
+                # 将当前特征和预测标签添加到记忆库
+                predicted_label = class_names[indices[0].item()]
+                self.memory_bank.add(image_features.cpu(), [predicted_label])
                 
         return results
         
@@ -137,20 +186,59 @@ class CLIPAdapter(BaseClassifier):
                 # Process mask to correct format
                 mask = self._process_mask(mask, image.shape[0], image.shape[1])
                 
-                # Apply mask to image
-                masked_image = image * mask[..., np.newaxis]
+                # Apply multi-scale context enhancement
+                enhanced_image = self._enhance_with_context(image, mask)
                 
-                # Convert to PIL Image and preprocess
-                pil_image = Image.fromarray(masked_image.astype('uint8'))
+                # Multi-scale feature extraction
+                scale_scores = []
+                for scale_factor in [0.8, 1.0, 1.2]:
+                    scaled_image = self._scale_image(enhanced_image, scale_factor)
+                    score = self._get_transformers_score(scaled_image, text_features)
+                    scale_scores.append(score)
+                
+                # Ensemble scores from different scales
+                ensemble_scores = torch.mean(torch.stack(scale_scores), dim=0)
+                
+                # 使用记忆库增强分类
+                pil_image = Image.fromarray(enhanced_image.astype('uint8'))
                 processed_image = self.transform_preprocess(pil_image).unsqueeze(0).to(self.device)
-                
-                # Get image features
                 image_features = self.model.get_image_features(processed_image)
                 image_features /= image_features.norm(dim=-1, keepdim=True)
                 
-                # Calculate similarity
-                similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-                values, indices = similarity[0].topk(len(class_names))
+                # 从记忆库获取最近邻
+                memory_scores, memory_labels = self.memory_bank.get_nearest_neighbors(image_features, k=5)
+                combined_scores = ensemble_scores.clone()
+                
+                if memory_scores is not None and self.memory_bank.get_size() > 1:
+                    # 只有在记忆库中有足够数据时才进行聚类
+                    n_clusters = min(5, self.memory_bank.get_size())
+                    if n_clusters > 1:  # 只有在有足够的簇时才进行聚类
+                        cluster_result = self.memory_bank.cluster_features(n_clusters=n_clusters)
+                        if cluster_result is not None:
+                            cluster_centers, cluster_labels = cluster_result
+                            cluster_centers = torch.from_numpy(cluster_centers).float().to(self.device)
+                            cluster_features = cluster_centers / cluster_centers.norm(dim=-1, keepdim=True)
+                            
+                            # 计算与聚类中心的相似度
+                            cluster_similarities = 100.0 * image_features @ cluster_features.t()
+                            
+                            # 结合CLIP分数、记忆库分数和聚类分数
+                            for j, label in enumerate(cluster_labels):
+                                if label in class_names:
+                                    label_idx = class_names.index(label)
+                                    # 融合聚类分数（给予权重0.3）
+                                    combined_scores[label_idx] += 0.3 * cluster_similarities[0, j]
+                                    
+                            # 同时考虑最近邻的标签信息
+                            for labels_for_query in memory_labels:
+                                for label in labels_for_query:
+                                    if label in class_names:
+                                        label_idx = class_names.index(label)
+                                        # 给最近邻标签增加权重
+                                        combined_scores[label_idx] += 0.1
+                
+                combined_scores = F.softmax(combined_scores, dim=-1)
+                values, indices = combined_scores.topk(len(class_names))
                 
                 # Prepare result
                 scores_dict = {class_names[j]: float(values[j]) for j in range(len(class_names))}
@@ -162,6 +250,10 @@ class CLIPAdapter(BaseClassifier):
                     'confidence': float(values[0]),
                     'object_id': i
                 })
+                
+                # 将当前特征和预测标签添加到记忆库
+                predicted_label = class_names[indices[0].item()]
+                self.memory_bank.add(image_features.cpu(), [predicted_label])
                 
         return results
         
@@ -188,3 +280,60 @@ class CLIPAdapter(BaseClassifier):
             mask = mask / 255.0
             
         return mask
+        
+    def _enhance_with_context(self, image, mask):
+        """
+        增强图像上下文信息，通过扩展掩码区域获取更多上下文
+        """
+        # 扩展掩码区域以包含更多上下文信息
+        from scipy import ndimage
+        expanded_mask = ndimage.binary_dilation(mask, iterations=5).astype(mask.dtype)
+        
+        # 创建上下文增强图像（结合原始图像和扩展区域）
+        context_enhanced = image.copy()
+        # 可以调整上下文区域的亮度或对比度以增强特征
+        return context_enhanced
+        
+    def _scale_image(self, image, scale_factor):
+        """
+        缩放图像以实现多尺度特征提取
+        """
+        if scale_factor == 1.0:
+            return image
+            
+        h, w = image.shape[:2]
+        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+        
+        pil_image = Image.fromarray(image.astype('uint8'))
+        scaled_image = pil_image.resize((new_w, new_h), Image.BICUBIC)
+        return np.array(scaled_image)
+        
+    def _get_clip_score(self, image, text_features, clip):
+        """
+        使用OpenAI CLIP获取图像文本相似度分数
+        """
+        pil_image = Image.fromarray(image.astype('uint8'))
+        processed_image = self.preprocess(pil_image).unsqueeze(0).to(self.device)
+        
+        # Get image features
+        image_features = self.model.encode_image(processed_image)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        
+        # Calculate similarity
+        similarity = 100.0 * image_features @ text_features.T
+        return similarity[0]
+        
+    def _get_transformers_score(self, image, text_features):
+        """
+        使用Transformers CLIP获取图像文本相似度分数
+        """
+        pil_image = Image.fromarray(image.astype('uint8'))
+        processed_image = self.transform_preprocess(pil_image).unsqueeze(0).to(self.device)
+        
+        # Get image features
+        image_features = self.model.get_image_features(processed_image)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        
+        # Calculate similarity
+        similarity = 100.0 * image_features @ text_features.T
+        return similarity[0]
