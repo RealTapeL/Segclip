@@ -5,13 +5,16 @@ from PIL import Image
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+import cv2
+
+# Add the project root to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.segmentor.fastsam_adapter import FastSAMAdapter
 from src.classifier.clip_adapter import CLIPAdapter
 from src.pipeline.segclip_pipeline import SegCLIPPipeline
 
-def save_segmentation_results(image_path, seg_result, masks, output_root, timestamp):
+def save_segmentation_results(image_path, seg_result, masks, fastsam_model, output_root, timestamp):
     """
     Save FastSAM segmentation results
     """
@@ -32,6 +35,56 @@ def save_segmentation_results(image_path, seg_result, masks, output_root, timest
     # Save FastSAM raw results (the actual FastSAM inference results)
     fastsam_result_folder = os.path.join(segmentation_folder, 'fastsam_inference')
     os.makedirs(fastsam_result_folder, exist_ok=True)
+    
+    # Save FastSAM visualization using direct FastSAM inference - the correct way
+    if seg_result and len(seg_result) > 0:
+        # Use the fastsam_inference module to generate the original FastSAM result
+        fastsam_output_path = os.path.join(fastsam_result_folder, 'fastsam_segmentation.png')
+        
+        # Build command to run FastSAM inference
+        fastsam_inference_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'segmentor', 'fastsam_inference.py')
+        cmd = (f"python {fastsam_inference_path} "
+               f"--model_path {fastsam_model} "
+               f"--img_path {image_path} "
+               f"--output {fastsam_result_folder}/ "
+               f"--conf 0.4 "
+               f"--iou 0.9")
+        
+        # Run FastSAM inference
+        os.system(cmd)
+        
+        # Rename the output file to our standard name
+        # FastSAM inference saves with the same name as input, so we need to rename it
+        input_filename = os.path.basename(image_path)
+        generated_file = os.path.join(fastsam_result_folder, input_filename)
+        if os.path.exists(generated_file):
+            os.rename(generated_file, fastsam_output_path)
+        
+        # Save individual masks from FastSAM results
+        if hasattr(seg_result[0], 'masks') and seg_result[0].masks is not None:
+            masks_data = seg_result[0].masks.data
+            for i, mask in enumerate(masks_data):
+                # Save each mask as an image
+                mask_np = mask.cpu().numpy() if hasattr(mask, 'cpu') else np.array(mask)
+                mask_img = Image.fromarray((mask_np * 255).astype(np.uint8))
+                mask_img.save(os.path.join(fastsam_result_folder, f"raw_mask_{i:03d}.png"))
+        
+        # Save boxes data if available
+        if hasattr(seg_result[0], 'boxes') and seg_result[0].boxes is not None:
+            boxes_data = seg_result[0].boxes.data
+            boxes_file = os.path.join(fastsam_result_folder, "boxes_data.txt")
+            with open(boxes_file, 'w') as f:
+                f.write("Boxes data:\n")
+                for i, box in enumerate(boxes_data):
+                    f.write(f"Box {i}: {box}\n")
+        
+        # Save confidence scores if available
+        if hasattr(seg_result[0].boxes, 'conf') and seg_result[0].boxes.conf is not None:
+            conf_file = os.path.join(fastsam_result_folder, "confidence_scores.txt")
+            with open(conf_file, 'w') as f:
+                f.write("Confidence scores:\n")
+                for i, score in enumerate(seg_result[0].boxes.conf):
+                    f.write(f"Mask {i}: {score}\n")
     
     # Save individual masks
     for i, mask_data in enumerate(masks):
@@ -214,7 +267,7 @@ def main():
     masks = segmentor.postprocess(seg_result, np.array(image))
     
     # Save segmentation results
-    save_segmentation_results(args.image_path, seg_result, masks, args.output_path, timestamp)
+    save_segmentation_results(args.image_path, seg_result, masks, args.fastsam_model, args.output_path, timestamp)
     
     # Run full pipeline for classification
     results = pipeline.run(args.image_path, args.classes)

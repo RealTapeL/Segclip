@@ -1,16 +1,18 @@
 import sys
 import os
 
-# Add local FastSAM to path
-fastsam_path = os.path.join(os.path.dirname(__file__), '..', '..', 'fastsam')
-sys.path.insert(0, fastsam_path)
+# Add the segmentor directory to the path so we can import fastsam as a package
+segmentor_path = os.path.dirname(__file__)
+if segmentor_path not in sys.path:
+    sys.path.insert(0, segmentor_path)
 
 import torch
 import numpy as np
 from PIL import Image
 
 # Import FastSAM modules directly from local copy
-from fastsam import FastSAM, FastSAMPrompt
+from fastsam.model import FastSAM
+from fastsam.prompt import FastSAMPrompt
 
 # Use absolute import for BaseSegmentor
 from src.segmentor.base_segmentor import BaseSegmentor

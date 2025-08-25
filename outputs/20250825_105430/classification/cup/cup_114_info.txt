@@ -1,0 +1,6 @@
+Class: cup
+Confidence: 0.577
+Scores:
+  headphones: 0.577
+  cup: 0.353
+  pencil: 0.070
