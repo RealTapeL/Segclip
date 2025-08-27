@@ -1,0 +1,6 @@
+Class: computer
+Confidence: 0.546
+Scores:
+  watch: 0.546
+  computer: 0.454
+  cup: 0.000

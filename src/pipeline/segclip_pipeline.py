@@ -53,3 +53,45 @@ class SegCLIPPipeline:
         results = self.classifier.classify(np.array(image), mask_arrays, class_names)
         
         return results
+        
+    def update_memory_bank(self, image_path, class_names, ground_truth_labels):
+        """
+        Update memory bank with labeled samples
+        """
+        # Load image
+        image = Image.open(image_path).convert('RGB')
+        
+        # Segment
+        seg_result = self.segmentor.segment(image)
+        masks = self.segmentor.postprocess(seg_result, np.array(image))
+        
+        # Extract mask arrays
+        mask_arrays = []
+        for ann in masks:
+            if isinstance(ann, dict) and 'segmentation' in ann:
+                mask = ann['segmentation']
+            else:
+                mask = ann
+                
+            # Handle different mask formats
+            if isinstance(mask, dict):
+                try:
+                    from pycocotools import mask as mask_utils
+                    mask = mask_utils.decode(mask)
+                except ImportError:
+                    continue
+            elif hasattr(mask, 'cpu'):
+                mask = mask.cpu().numpy()
+            elif torch.is_tensor(mask):
+                mask = mask.cpu().numpy()
+            elif isinstance(mask, np.ndarray) and mask.ndim > 2:
+                if mask.ndim == 3:
+                    mask = mask[:, :, 0]
+            
+            if isinstance(mask, np.ndarray):
+                mask_arrays.append(mask)
+            
+        # Run classification, which will automatically update memory bank
+        results = self.classifier.classify(np.array(image), mask_arrays, class_names)
+        
+        return results

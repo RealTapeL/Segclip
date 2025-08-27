@@ -1,0 +1,6 @@
+Class: cup
+Confidence: nan
+Scores:
+  watch: nan
+  computer: nan
+  cup: nan

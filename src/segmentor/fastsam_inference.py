@@ -12,7 +12,6 @@ import torch
 from PIL import Image
 from tools import convert_box_xywh_to_xyxy
 
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -32,7 +31,7 @@ def parse_args():
         "--text_prompt", type=str, default=None, help='use text prompt eg: "a dog"'
     )
     parser.add_argument(
-        "--conf", type=float, default=0.1, help="object confidence threshold"
+        "--conf", type=float, default=0.4, help="object confidence threshold"
     )
     parser.add_argument(
         "--output", type=str, default="./output/", help="image save path"
