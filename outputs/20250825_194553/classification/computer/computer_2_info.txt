@@ -1,5 +1,0 @@
-Class: computer
-Confidence: 0.899
-Scores:
-  computer: 0.899
-  bottle: 0.101

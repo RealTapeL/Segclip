@@ -17,6 +17,8 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
     """
     Save FastSAM segmentation results
     """
+    # Ensure output_root is an absolute path
+    output_root = os.path.abspath(output_root)
     segmentation_folder = os.path.join(output_root, timestamp, 'segmentation')
     masks_folder = os.path.join(segmentation_folder, 'masks')
     os.makedirs(segmentation_folder, exist_ok=True)
@@ -108,11 +110,20 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
     full_mask_image.save(os.path.join(segmentation_folder, 'full_mask.png'))
     
     print(f"Segmentation results saved to {segmentation_folder}")
+    # Print the actual files saved
+    if os.path.exists(segmentation_folder):
+        files = os.listdir(segmentation_folder)
+        print(f"Files in segmentation folder: {files}")
+    if os.path.exists(masks_folder):
+        mask_files = os.listdir(masks_folder)
+        print(f"Number of mask files saved: {len(mask_files)}")
 
 def save_classification_results(image_path, results, output_root, timestamp):
     """
     Save masks and images by class names
     """
+    # Ensure output_root is an absolute path
+    output_root = os.path.abspath(output_root)
     classification_folder = os.path.join(output_root, timestamp, 'classification')
     os.makedirs(classification_folder, exist_ok=True)
     
@@ -166,6 +177,10 @@ def save_classification_results(image_path, results, output_root, timestamp):
                 f.write(f"  {class_label}: {score:.3f}\n")
     
     print(f"Classification results saved to {classification_folder}")
+    # Print the actual files saved
+    if os.path.exists(classification_folder):
+        class_dirs = os.listdir(classification_folder)
+        print(f"Classification subdirectories: {class_dirs}")
 
 def main():
     import argparse
@@ -196,6 +211,10 @@ def main():
     # Create timestamp for this run
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # Ensure output path is absolute
+    output_path = os.path.abspath(args.output_path)
+    print(f"Output will be saved to: {output_path}")
+    
     # Initialize models
     segmentor = FastSAMAdapter(args.fastsam_model, device=args.device, conf=args.conf, iou=args.iou)
     classifier = LLaVAAdapter(args.llava_model, device=args.device)
@@ -208,19 +227,32 @@ def main():
     seg_result = segmentor.segment(image)
     masks = segmentor.postprocess(seg_result, np.array(image))
     
-    # Save segmentation results
-    save_segmentation_results(args.image_path, seg_result, masks, args.fastsam_model, args.output_path, timestamp)
+    # Save segmentation results regardless of what happens next
+    try:
+        save_segmentation_results(args.image_path, seg_result, masks, args.fastsam_model, output_path, timestamp)
+        print("Segmentation results saved successfully")
+    except Exception as e:
+        print(f"Error saving segmentation results: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Run full pipeline for classification
-    results = pipeline.run(args.image_path, args.classes)
-    
-    # Save classification results
-    save_classification_results(args.image_path, results, args.output_path, timestamp)
-    
-    # Print results
-    print(f"Results saved to {os.path.join(args.output_path, timestamp)}")
-    for i, result in enumerate(results):
-        print(f"Object {i+1}: {result['class']} (confidence: {result['confidence']:.3f})")
+    try:
+        results = pipeline.run(args.image_path, args.classes)
+        
+        # Save classification results
+        save_classification_results(args.image_path, results, output_path, timestamp)
+        
+        # Print results
+        final_output_path = os.path.join(output_path, timestamp)
+        print(f"Results saved to {final_output_path}")
+        for i, result in enumerate(results):
+            print(f"Object {i+1}: {result['class']} (confidence: {result['confidence']:.3f})")
+    except Exception as e:
+        print(f"Error during classification: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Segmentation completed but classification failed")
 
 if __name__ == '__main__':
     main()

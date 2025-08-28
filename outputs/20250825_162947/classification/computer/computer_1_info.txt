@@ -1,5 +1,0 @@
-Class: computer
-Confidence: 0.595
-Scores:
-  computer: 0.595
-  glass_bottle: 0.405
