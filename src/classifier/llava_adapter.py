@@ -6,6 +6,7 @@ import sys
 from .base_classifier import BaseClassifier
 import torch.nn.functional as F
 import torchvision.transforms as transforms
+import functools
 
 class LLaVAAdapter(BaseClassifier):
     def __init__(self, model_path='/home/ps/llava-v1.5-7b', device='cuda'):
@@ -35,6 +36,9 @@ class LLaVAAdapter(BaseClassifier):
             self.tokenizer_image_token = llava.mm_utils.tokenizer_image_token
             self.IMAGE_TOKEN_INDEX = llava.constants.IMAGE_TOKEN_INDEX
             
+            # Apply monkey patch to fix the cache_position issue
+            self._apply_cache_position_patch()
+            
             # Restore original sys.path
             sys.path[:] = original_path
             
@@ -43,6 +47,35 @@ class LLaVAAdapter(BaseClassifier):
         except Exception as e:
             print(f"Failed to load LLaVA model: {e}")
             raise e
+            
+    def _apply_cache_position_patch(self):
+        """
+        Apply monkey patch to fix cache_position issue
+        """
+        # Patch the forward method of the model to accept cache_position parameter
+        original_forward = self.model.forward
+        
+        @functools.wraps(original_forward)
+        def patched_forward(*args, **kwargs):
+            # Add cache_position=None if it's not already present
+            if 'cache_position' not in kwargs:
+                kwargs['cache_position'] = None
+            return original_forward(*args, **kwargs)
+        
+        # Apply the patch
+        self.model.forward = patched_forward
+        
+        # Also patch the prepare_inputs_for_generation method
+        original_prepare_inputs = self.model.prepare_inputs_for_generation
+        
+        @functools.wraps(original_prepare_inputs)
+        def patched_prepare_inputs(*args, **kwargs):
+            # Remove cache_position if it causes issues
+            kwargs.pop('cache_position', None)
+            return original_prepare_inputs(*args, **kwargs)
+        
+        # Apply the patch
+        self.model.prepare_inputs_for_generation = patched_prepare_inputs
             
     def load_model(self, config):
         pass

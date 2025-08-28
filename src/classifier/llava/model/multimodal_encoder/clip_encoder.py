@@ -25,23 +25,15 @@ class CLIPVisionTower(nn.Module):
                 try:
                     self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
                 except Exception:
-                    # Try to find config in the parent model path
-                    try:
-                        parent_model_path = os.path.dirname(self.vision_tower_name)
-                        vision_tower_name = os.path.basename(self.vision_tower_name)
-                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
-                            # For common vision towers, use default config
-                            self.cfg_only = CLIPVisionConfig()
-                        else:
-                            # Try to load from parent model path
-                            config_path = os.path.join(parent_model_path, "config.json")
-                            if os.path.exists(config_path):
-                                self.cfg_only = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
-                            else:
-                                self.cfg_only = CLIPVisionConfig()
-                    except Exception:
-                        # If that fails, create a default config
-                        self.cfg_only = CLIPVisionConfig()
+                    # Use standard CLIP config that matches LLaVA expectations
+                    self.cfg_only = CLIPVisionConfig(
+                        hidden_size=1024,
+                        intermediate_size=4096,
+                        num_hidden_layers=24,
+                        num_attention_heads=16,
+                        image_size=224,
+                        patch_size=14
+                    )
             else:
                 self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
 
@@ -59,23 +51,15 @@ class CLIPVisionTower(nn.Module):
                 print(f"Failed to load from local files: {e}")
                 # Create default image processor
                 self.image_processor = CLIPImageProcessor()
-                # Create a minimal vision tower config
-                try:
-                    config = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
-                except:
-                    # Try to find config in the parent model path
-                    try:
-                        parent_model_path = os.path.dirname(self.vision_tower_name)
-                        vision_tower_name = os.path.basename(self.vision_tower_name)
-                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
-                            # For common vision towers like openai/clip-vit-large-patch14
-                            config = CLIPVisionConfig.from_pretrained(vision_tower_name)
-                        else:
-                            # Try to load from parent model path
-                            config = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
-                    except:
-                        # Use default config if we can't load from local files
-                        config = CLIPVisionConfig()
+                # Create standard CLIP config that matches LLaVA expectations
+                config = CLIPVisionConfig(
+                    hidden_size=1024,
+                    intermediate_size=4096,
+                    num_hidden_layers=24,
+                    num_attention_heads=16,
+                    image_size=224,
+                    patch_size=14
+                )
                 self.vision_tower = CLIPVisionModel(config)
                 if device_map:
                     self.vision_tower = self.vision_tower.to(device_map)
@@ -178,23 +162,15 @@ class CLIPVisionTowerS2(CLIPVisionTower):
                 print(f"Failed to load from local files: {e}")
                 # Create default image processor
                 self.image_processor = CLIPImageProcessor()
-                # Create a minimal vision tower config
-                try:
-                    config = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
-                except:
-                    # Try to find config in the parent model path
-                    try:
-                        parent_model_path = os.path.dirname(self.vision_tower_name)
-                        vision_tower_name = os.path.basename(self.vision_tower_name)
-                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
-                            # For common vision towers like openai/clip-vit-large-patch14
-                            config = CLIPVisionConfig.from_pretrained(vision_tower_name)
-                        else:
-                            # Try to load from parent model path
-                            config = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
-                    except:
-                        # Use default config if we can't load from local files
-                        config = CLIPVisionConfig()
+                # Create standard CLIP config that matches LLaVA expectations
+                config = CLIPVisionConfig(
+                    hidden_size=1024,
+                    intermediate_size=4096,
+                    num_hidden_layers=24,
+                    num_attention_heads=16,
+                    image_size=224,
+                    patch_size=14
+                )
                 self.vision_tower = CLIPVisionModel(config)
                 if device_map:
                     self.vision_tower = self.vision_tower.to(device_map)
