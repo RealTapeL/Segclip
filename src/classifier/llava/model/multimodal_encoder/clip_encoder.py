@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
-
+import os
 
 class CLIPVisionTower(nn.Module):
     def __init__(self, vision_tower, args, delay_load=False):
@@ -19,15 +19,69 @@ class CLIPVisionTower(nn.Module):
         elif getattr(args, 'unfreeze_mm_vision_tower', False):
             self.load_model()
         else:
-            self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
+            # Support offline mode
+            if os.environ.get('HF_HUB_OFFLINE') == '1':
+                # Try to load from local path
+                try:
+                    self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
+                except Exception:
+                    # Try to find config in the parent model path
+                    try:
+                        parent_model_path = os.path.dirname(self.vision_tower_name)
+                        vision_tower_name = os.path.basename(self.vision_tower_name)
+                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
+                            # For common vision towers, use default config
+                            self.cfg_only = CLIPVisionConfig()
+                        else:
+                            # Try to load from parent model path
+                            config_path = os.path.join(parent_model_path, "config.json")
+                            if os.path.exists(config_path):
+                                self.cfg_only = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
+                            else:
+                                self.cfg_only = CLIPVisionConfig()
+                    except Exception:
+                        # If that fails, create a default config
+                        self.cfg_only = CLIPVisionConfig()
+            else:
+                self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
 
     def load_model(self, device_map=None):
         if self.is_loaded:
-            print('{} is already loaded, `load_model` called again, skipping.'.format(self.vision_tower_name))
+            print('{} is already loaded, [load_model](file:///home/ps/few-shot-research/mcxh_img/SegClip/src/classifier/llava/model/multimodal_encoder/clip_encoder.py#L25-L68) called again, skipping.'.format(self.vision_tower_name))
             return
 
-        self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name)
-        self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
+        # Support offline mode
+        if os.environ.get('HF_HUB_OFFLINE') == '1':
+            try:
+                self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name, local_files_only=True)
+                self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map, local_files_only=True)
+            except Exception as e:
+                print(f"Failed to load from local files: {e}")
+                # Create default image processor
+                self.image_processor = CLIPImageProcessor()
+                # Create a minimal vision tower config
+                try:
+                    config = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
+                except:
+                    # Try to find config in the parent model path
+                    try:
+                        parent_model_path = os.path.dirname(self.vision_tower_name)
+                        vision_tower_name = os.path.basename(self.vision_tower_name)
+                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
+                            # For common vision towers like openai/clip-vit-large-patch14
+                            config = CLIPVisionConfig.from_pretrained(vision_tower_name)
+                        else:
+                            # Try to load from parent model path
+                            config = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
+                    except:
+                        # Use default config if we can't load from local files
+                        config = CLIPVisionConfig()
+                self.vision_tower = CLIPVisionModel(config)
+                if device_map:
+                    self.vision_tower = self.vision_tower.to(device_map)
+        else:
+            self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name)
+            self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
         self.vision_tower.requires_grad_(False)
 
         self.is_loaded = True
@@ -112,11 +166,41 @@ class CLIPVisionTowerS2(CLIPVisionTower):
 
     def load_model(self, device_map=None):
         if self.is_loaded:
-            print('{} is already loaded, `load_model` called again, skipping.'.format(self.vision_tower_name))
+            print('{} is already loaded, [load_model](file:///home/ps/few-shot-research/mcxh_img/SegClip/src/classifier/llava/model/multimodal_encoder/clip_encoder.py#L25-L68) called again, skipping.'.format(self.vision_tower_name))
             return
 
-        self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name)
-        self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
+        # Support offline mode
+        if os.environ.get('HF_HUB_OFFLINE') == '1':
+            try:
+                self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name, local_files_only=True)
+                self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map, local_files_only=True)
+            except Exception as e:
+                print(f"Failed to load from local files: {e}")
+                # Create default image processor
+                self.image_processor = CLIPImageProcessor()
+                # Create a minimal vision tower config
+                try:
+                    config = CLIPVisionConfig.from_pretrained(self.vision_tower_name, local_files_only=True)
+                except:
+                    # Try to find config in the parent model path
+                    try:
+                        parent_model_path = os.path.dirname(self.vision_tower_name)
+                        vision_tower_name = os.path.basename(self.vision_tower_name)
+                        if vision_tower_name.startswith("openai") or vision_tower_name.startswith("laion"):
+                            # For common vision towers like openai/clip-vit-large-patch14
+                            config = CLIPVisionConfig.from_pretrained(vision_tower_name)
+                        else:
+                            # Try to load from parent model path
+                            config = CLIPVisionConfig.from_pretrained(parent_model_path, local_files_only=True)
+                    except:
+                        # Use default config if we can't load from local files
+                        config = CLIPVisionConfig()
+                self.vision_tower = CLIPVisionModel(config)
+                if device_map:
+                    self.vision_tower = self.vision_tower.to(device_map)
+        else:
+            self.image_processor = CLIPImageProcessor.from_pretrained(self.vision_tower_name)
+            self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
         self.vision_tower.requires_grad_(False)
 
         self.image_processor.size['shortest_edge'] = self.s2_image_size

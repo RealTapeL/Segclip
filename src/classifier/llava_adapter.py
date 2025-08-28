@@ -25,7 +25,8 @@ class LLaVAAdapter(BaseClassifier):
             import llava.mm_utils
             import llava.constants
             
-            # Load the model
+            # Load the model in offline mode
+            os.environ['HF_HUB_OFFLINE'] = '1'
             self.tokenizer, self.model, self.image_processor, self.context_len = llava.model.builder.load_pretrained_model(
                 model_path, None, 'llava', False, False, device_map="auto", device=device
             )
@@ -59,6 +60,10 @@ class LLaVAAdapter(BaseClassifier):
             image = image.cpu().numpy()
         if isinstance(mask, torch.Tensor):
             mask = mask.cpu().numpy()
+            
+        # Handle case where mask is None
+        if mask is None:
+            return Image.fromarray(image.astype('uint8'))
             
         # Process mask format
         if mask.ndim > 2:
@@ -102,96 +107,80 @@ class LLaVAAdapter(BaseClassifier):
         return prompt
         
     def classify(self, image, masks, class_names):
-        image = np.array(image)
+        """
+        Classify masked regions using LLaVA
+        """
         results = []
         
-        with torch.no_grad():
-            for i, mask in enumerate(masks):
-                # Process mask to correct format
-                mask = self._process_mask(mask, image.shape[0], image.shape[1])
+        # Handle case where masks is a single mask
+        if not isinstance(masks, list):
+            masks = [masks]
+            
+        for i, mask in enumerate(masks):
+            # Prepare masked image
+            pil_image = self._prepare_masked_image(np.array(image), mask)
+            
+            # Generate prompt
+            prompt = self._generate_prompt(class_names)
+            
+            # Process image
+            image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
+            if type(image_tensor) is list:
+                image_tensor = [image.to(self.model.device, dtype=torch.float16) for image in image_tensor]
+            else:
+                image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
                 
-                # Prepare masked region image
-                masked_pil_image = self._prepare_masked_image(image, mask)
-                
-                # Process image for LLaVA
-                image_tensor = self.process_images([masked_pil_image], self.image_processor, {})
-                if type(image_tensor) is list:
-                    image_tensor = [_image.to(self.model.device, dtype=torch.float16) for _image in image_tensor]
-                else:
-                    image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
-                
-                # Generate prompt
-                prompt = self._generate_prompt(class_names)
-                input_ids = self.tokenizer_image_token(prompt, self.tokenizer, self.IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).to(self.model.device)
-                
-                # Generate response
-                generated_ids = self.model.generate(
+            # Tokenize prompt
+            input_ids = self.tokenizer_image_token(prompt, self.tokenizer, self.IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+            
+            # Generate output
+            with torch.inference_mode():
+                output_ids = self.model.generate(
                     input_ids,
                     images=image_tensor,
-                    max_new_tokens=128,
-                    do_sample=False,
+                    do_sample=True,
+                    temperature=0.2,
+                    max_new_tokens=256,
+                    use_cache=True
                 )
                 
-                # Decode output
-                output_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-                predicted_text = output_text.strip()
-                
-                # Parse the response to get assistant's answer only
-                if "ASSISTANT:" in predicted_text:
-                    predicted_text = predicted_text.split("ASSISTANT:")[-1].strip()
-                
-                # Create scores based on exact match
-                scores_dict = {}
-                for class_name in class_names:
-                    # Simple matching - can be improved with fuzzy matching
-                    if class_name.lower() in predicted_text.lower() or predicted_text.lower() in class_name.lower():
-                        scores_dict[class_name] = 1.0
-                    else:
-                        scores_dict[class_name] = 0.0
-                
-                # If no exact match, assign equal probabilities
-                if sum(scores_dict.values()) == 0:
-                    for class_name in class_names:
-                        scores_dict[class_name] = 1.0 / len(class_names)
+            # Decode output
+            outputs = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+            
+            # Calculate confidence scores for all classes
+            scores = {}
+            outputs_lower = outputs.lower()
+            for class_name in class_names:
+                if class_name.lower() in outputs_lower:
+                    scores[class_name] = 1.0
                 else:
-                    # Normalize scores
-                    total = sum(scores_dict.values())
-                    for class_name in class_names:
-                        scores_dict[class_name] /= total
+                    scores[class_name] = 0.0
+                    
+            # If no exact match, use simple matching
+            if all(score == 0.0 for score in scores.values()):
+                for class_name in class_names:
+                    if class_name.lower() in outputs.lower():
+                        scores[class_name] = 1.0
+                        break
+                        
+            # If still no match, assign low confidence to all
+            if all(score == 0.0 for score in scores.values()):
+                for class_name in class_names:
+                    scores[class_name] = 1.0 / len(class_names)
+            else:
+                # Normalize scores
+                total = sum(scores.values())
+                scores = {k: v/total for k, v in scores.items()}
                 
-                # Get predicted class
-                predicted_class = max(scores_dict, key=scores_dict.get)
-                confidence = scores_dict[predicted_class]
-                
-                results.append({
-                    'mask': mask,
-                    'scores': scores_dict,
-                    'class': predicted_class,
-                    'confidence': confidence,
-                    'object_id': i
-                })
-                
+            # Select class with highest score
+            best_class = max(scores, key=scores.get)
+            confidence = scores[best_class]
+            
+            results.append({
+                'class': best_class,
+                'confidence': confidence,
+                'scores': scores,
+                'mask': mask
+            })
+            
         return results
-        
-    def _process_mask(self, mask, image_height, image_width):
-        """Process mask to ensure correct format"""
-        # Handle different mask formats
-        if isinstance(mask, torch.Tensor):
-            mask = mask.cpu().numpy()
-        
-        # Ensure mask is 2D
-        if mask.ndim > 2:
-            mask = mask[:, :, 0]
-            
-        # Ensure mask is the same size as image
-        if mask.shape[0] != image_height or mask.shape[1] != image_width:
-            # Resize mask to match image size
-            mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-            mask_pil = transforms.Resize((image_height, image_width), interpolation=Image.NEAREST)(mask_pil)
-            mask = np.array(mask_pil) / 255.0
-            
-        # Ensure mask is binary
-        if mask.max() > 1:
-            mask = mask / 255.0
-            
-        return mask
