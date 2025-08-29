@@ -1,0 +1,4 @@
+Class: 正常引线键合
+Confidence: 1.000
+Scores:
+  正常引线键合: 1.000

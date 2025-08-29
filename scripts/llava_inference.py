@@ -5,6 +5,7 @@ from PIL import Image
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+import json
 
 # Add the project root to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,6 +13,38 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.segmentor.fastsam_adapter import FastSAMAdapter
 from src.classifier.llava_adapter import LLaVAAdapter
 from src.pipeline.segclip_pipeline import SegCLIPPipeline
+
+def load_prompts(prompts_file):
+    """
+    Load prompts from a JSON file
+    """
+    if not os.path.exists(prompts_file):
+        print(f"Warning: Prompts file {prompts_file} not found. Using default prompt.")
+        return None
+    
+    try:
+        with open(prompts_file, 'r', encoding='utf-8') as f:
+            prompts = json.load(f)
+        return prompts
+    except Exception as e:
+        print(f"Error loading prompts file: {e}")
+        return None
+
+def load_custom_prompt(prompt_file):
+    """
+    Load a custom prompt from a text file
+    """
+    if not os.path.exists(prompt_file):
+        print(f"Warning: Custom prompt file {prompt_file} not found.")
+        return None
+    
+    try:
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            prompt = f.read().strip()
+        return prompt
+    except Exception as e:
+        print(f"Error loading custom prompt file: {e}")
+        return None
 
 def save_segmentation_results(image_path, seg_result, masks, fastsam_model, output_root, timestamp):
     """
@@ -239,6 +272,18 @@ def main():
                         help='Class names for classification. If not provided, open vocabulary classification is used.')
     parser.add_argument('--open_vocabulary', action='store_true',
                         help='Use open vocabulary classification (equivalent to not providing --classes)')
+    parser.add_argument('--prompt_key', type=str, 
+                        default=None,
+                        help='Key for prompt in prompts.json file')
+    parser.add_argument('--custom_prompt', type=str, 
+                        default=None,
+                        help='Custom prompt for LLaVA classification')
+    parser.add_argument('--prompt_file', type=str, 
+                        default='/home/ps/few-shot-research/mcxh_img/SegClip/prompt.txt',
+                        help='Path to a text file containing a custom prompt')
+    parser.add_argument('--prompts_file', type=str, 
+                        default='/home/ps/few-shot-research/mcxh_img/SegClip/config/prompts.json',
+                        help='Path to prompts JSON file')
     parser.add_argument('--fastsam_model', type=str, 
                         default='../FastSAM/weights/FastSAM-x.pt', 
                         help='FastSAM model path')
@@ -255,14 +300,46 @@ def main():
     
     args = parser.parse_args()
     
-    # Determine if we should use open vocabulary classification
-    use_open_vocabulary = args.open_vocabulary or args.classes is None
+    # Load prompts from JSON file
+    prompts = load_prompts(args.prompts_file)
     
-    if use_open_vocabulary:
+    # Load custom prompt from text file if provided
+    custom_prompt_from_file = None
+    if args.prompt_file:
+        custom_prompt_from_file = load_custom_prompt(args.prompt_file)
+        if custom_prompt_from_file:
+            print(f"Loaded custom prompt from file: {args.prompt_file}")
+    
+    # Determine classification mode
+    use_open_vocabulary = args.open_vocabulary or (args.classes is None and args.custom_prompt is None and args.prompt_key is None and args.prompt_file is None)
+    use_custom_prompt = args.custom_prompt is not None
+    use_prompt_key = args.prompt_key is not None
+    use_prompt_file = args.prompt_file is not None and custom_prompt_from_file is not None
+    
+    # Determine the prompt to use
+    if use_custom_prompt:
+        print(f"Using custom prompt: {args.custom_prompt}")
+        custom_prompt = args.custom_prompt
+        class_names = None
+    elif use_prompt_file and custom_prompt_from_file:
+        print(f"Using custom prompt from file: {args.prompt_file}")
+        custom_prompt = custom_prompt_from_file
+        class_names = None
+    elif use_prompt_key:
+        if prompts and args.prompt_key in prompts:
+            custom_prompt = prompts[args.prompt_key]
+            print(f"Using prompt key '{args.prompt_key}': {custom_prompt}")
+        else:
+            custom_prompt = None
+            print(f"Prompt key '{args.prompt_key}' not found in prompts file. Using default behavior.")
+        class_names = None
+    elif use_open_vocabulary:
         print("Using open vocabulary classification - LLaVA will determine object classes automatically")
+        custom_prompt = None
         class_names = None
     else:
         print(f"Using specified classes: {args.classes}")
+        custom_prompt = None
         class_names = args.classes
     
     print(f"Using LLaVA model: {args.llava_model}")
@@ -302,7 +379,8 @@ def main():
     
     # Run full pipeline for classification
     try:
-        results = pipeline.run(args.image_path, class_names)
+        # Pass custom_prompt to the pipeline - fix the argument passing
+        results = pipeline.run(image_path=args.image_path, class_names=class_names, custom_prompt=custom_prompt)
         
         # Limit number of results if needed
         if len(results) > args.max_objects:

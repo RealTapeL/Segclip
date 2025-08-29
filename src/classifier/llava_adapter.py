@@ -65,10 +65,10 @@ class LLaVAAdapter(BaseClassifier):
         # 将图像和mask转换为bytes用于哈希
         image_bytes = image_array.tobytes()
         mask_bytes = mask.tobytes() if mask is not None else b''
-        class_names_str = ','.join(sorted(class_names))
+        class_names_str = ','.join(sorted(class_names)) if class_names else ''
         
         # 创建唯一标识符
-        key_data = image_bytes + mask_bytes + class_names_str.encode() + prompt.encode()
+        key_data = image_bytes + mask_bytes + class_names_str.encode() + (prompt.encode() if prompt else b'')
         cache_key = hashlib.md5(key_data).hexdigest()
         return cache_key
         
@@ -134,7 +134,15 @@ class LLaVAAdapter(BaseClassifier):
         prompt = "USER: <image>\nCarefully analyze this image and identify what single object is shown. Respond with ONLY the object name in a single word or short phrase. Do not include any other text or explanation.\nASSISTANT:"
         return prompt
         
-    def _parse_response(self, response, class_names):
+    def _generate_custom_prompt(self, custom_prompt):
+        """
+        Generate prompt based on custom user input
+        """
+        # 为IGBT分类任务创建更明确的指令
+        igbt_prompt = f"USER: <image>\n{custom_prompt}\n\n请根据以上标准对这张IGBT引线键合图像进行分类。从以下类别中选择一个最符合的类别并仅回复类别名称：\n正常引线键合、引线断裂、引线扭曲、虚焊、短路、引线氧化\n\nASSISTANT:"
+        return igbt_prompt
+        
+    def _parse_response(self, response, class_names=None):
         """
         Parse response with better logic to handle various response formats
         """
@@ -143,6 +151,16 @@ class LLaVAAdapter(BaseClassifier):
         
         # Remove any trailing punctuation
         response_clean = re.sub(r'[.!?\s]+$', '', response_clean)
+        
+        # If no class names provided (open vocabulary), return the response as is
+        if class_names is None:
+            # For IGBT task, try to extract one of the expected categories
+            igbt_categories = ["正常引线键合", "引线断裂", "引线扭曲", "虚焊", "短路", "引线氧化"]
+            for category in igbt_categories:
+                if category in response:
+                    return {category: 1.0}
+            # If none found, return the first part of the response
+            return {response.split()[0] if response.split() else response: 1.0}
         
         # Try to find exact matches
         match_found = False
@@ -182,12 +200,13 @@ class LLaVAAdapter(BaseClassifier):
                 
         return scores
         
-    def classify(self, image, masks, class_names=None):
+    def classify(self, image, masks, class_names=None, custom_prompt=None):
         """
         Classify masked regions using LLaVA with improved prompts and parsing
         """
         # If class_names is None, we perform open vocabulary classification
-        open_vocabulary = class_names is None
+        open_vocabulary = class_names is None and custom_prompt is None
+        use_custom_prompt = custom_prompt is not None
         
         results = []
         
@@ -209,8 +228,11 @@ class LLaVAAdapter(BaseClassifier):
         # 使用简单提示避免编号混淆
         for i, mask in enumerate(masks):
             # 生成缓存键
-            cache_key = self._get_cache_key(image_array, mask, class_names if class_names else [], 
-                                          "open_vocab" if open_vocabulary else "simple_prompt")
+            cache_key = self._get_cache_key(
+                image_array, mask, 
+                class_names if class_names else [], 
+                custom_prompt if use_custom_prompt else ("open_vocab" if open_vocabulary else "simple_prompt")
+            )
             cache_keys.append(cache_key)
             
             # 检查缓存
@@ -223,7 +245,9 @@ class LLaVAAdapter(BaseClassifier):
             pil_images.append((i, pil_image, mask, cache_key))  # 保存索引信息
             
             # Use appropriate prompt
-            if open_vocabulary:
+            if use_custom_prompt:
+                prompt = self._generate_custom_prompt(custom_prompt)
+            elif open_vocabulary:
                 prompt = self._generate_open_vocabulary_prompt()
             else:
                 prompt = self._generate_prompt_simple(class_names)
@@ -231,9 +255,12 @@ class LLaVAAdapter(BaseClassifier):
         
         # 对未缓存的图像进行批量处理
         for idx, (original_index, pil_image, mask, cache_key) in enumerate(pil_images):
-            prompt = prompts_list[idx] if idx < len(prompts_list) else (
-                self._generate_open_vocabulary_prompt() if open_vocabulary else self._generate_prompt_simple(class_names)
-            )
+            if use_custom_prompt:
+                prompt = self._generate_custom_prompt(custom_prompt)
+            else:
+                prompt = prompts_list[idx] if idx < len(prompts_list) else (
+                    self._generate_open_vocabulary_prompt() if open_vocabulary else self._generate_prompt_simple(class_names)
+                )
             
             # Process single image
             image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
@@ -252,7 +279,7 @@ class LLaVAAdapter(BaseClassifier):
                     images=image_tensor,
                     do_sample=False,  # 改为贪婪搜索而非采样
                     num_beams=1,      # 减少beam search数量
-                    max_new_tokens=50,  # 减少最大生成token数
+                    max_new_tokens=100,  # 适当增加最大生成token数但不过多
                     use_cache=True
                 )
                 
@@ -262,12 +289,24 @@ class LLaVAAdapter(BaseClassifier):
             # 输出LLaVA的原始回复到终端
             print(f"LLaVA Raw Response for object {idx+1}: '{response}'")
             
-            if open_vocabulary:
-                # For open vocabulary, we just return the response as the class
+            if open_vocabulary or use_custom_prompt:
+                # For open vocabulary or custom prompt, parse the response appropriately
+                if use_custom_prompt and ("正常引线键合" in response or "引线断裂" in response or "引线扭曲" in response or 
+                                      "虚焊" in response or "短路" in response or "引线氧化" in response):
+                    # Try to extract one of the IGBT categories
+                    result_class = "正常引线键合"  # Default
+                    for category in ["正常引线键合", "引线断裂", "引线扭曲", "虚焊", "短路", "引线氧化"]:
+                        if category in response:
+                            result_class = category
+                            break
+                else:
+                    # For other cases, use the full response or first part as class
+                    result_class = response.split('\n')[0].strip() if '\n' in response else response
+                    
                 result = {
-                    'class': response,
+                    'class': result_class,
                     'confidence': 1.0,  # For open vocabulary, we don't compute confidence scores
-                    'scores': {response: 1.0},
+                    'scores': {result_class: 1.0},
                     'mask': mask
                 }
             else:

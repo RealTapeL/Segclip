@@ -7,7 +7,7 @@ class SegCLIPPipeline:
         self.segmentor = segmentor
         self.classifier = classifier
         
-    def run(self, image_path, class_names=None):
+    def run(self, image_path, class_names=None, custom_prompt=None):
         # Load image
         image = Image.open(image_path).convert('RGB')
         
@@ -50,7 +50,7 @@ class SegCLIPPipeline:
                 mask_arrays.append(mask)
             
         # Classify
-        results = self.classifier.classify(np.array(image), mask_arrays, class_names)
+        results = self.classifier.classify(np.array(image), mask_arrays, class_names, custom_prompt)
         
         return results
         
