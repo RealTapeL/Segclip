@@ -1,4 +1,4 @@
-DEFAULT_IMAGE_PATH="/home/ps/few-shot-research/AdaCLIP/test_image/006.jpg"
+DEFAULT_IMAGE_PATH="/home/ps/few-shot-research/AdaCLIP/test_image/007.jpg"
 
 # Use the image path provided as the first argument, or use the default
 IMAGE_PATH=${1:-$DEFAULT_IMAGE_PATH}
@@ -17,7 +17,7 @@ python /home/ps/few-shot-research/mcxh_img/SegClip/scripts/llava_inference.py \
   --llava_model /home/ps/llava-v1.5-7b \
   --fastsam_model /home/ps/few-shot-research/mcxh_img/SegClip/models/fastsam/FastSAM-x.pt \
   --prompt_file /home/ps/few-shot-research/mcxh_img/SegClip/prompt.txt \
-  --max_objects 30
+  --max_objects 100
 
 # Or use predefined categories (uncomment the lines below and comment the lines above)
 # python /home/ps/few-shot-research/mcxh_img/SegClip/scripts/llava_inference.py \

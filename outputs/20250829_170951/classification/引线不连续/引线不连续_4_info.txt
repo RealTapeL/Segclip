@@ -1,0 +1,4 @@
+Class: 引线不连续
+Confidence: 1.000
+Scores:
+  引线不连续: 1.000

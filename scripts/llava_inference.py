@@ -82,7 +82,7 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
                f"--img_path {image_path} "
                f"--output {fastsam_result_folder}/ "
                f"--conf 0.1 "
-               f"--iou 0.9")
+               f"--iou 0.3")
         
         # Run FastSAM inference
         os.system(cmd)

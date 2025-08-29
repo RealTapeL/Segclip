@@ -1,0 +1,4 @@
+Class: 引线扭曲
+Confidence: 1.000
+Scores:
+  引线扭曲: 1.000

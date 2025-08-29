@@ -138,16 +138,20 @@ class LLaVAAdapter(BaseClassifier):
         """
         Generate prompt based on custom user input
         """
-        # 为IGBT分类任务创建更明确的指令
-        igbt_prompt = f"USER: <image>\n{custom_prompt}\n\n请根据以上标准对这张IGBT引线键合图像进行分类。从以下类别中选择一个最符合的类别并仅回复类别名称：\n正常引线键合、引线断裂、引线扭曲、虚焊、短路、引线氧化\n\nASSISTANT:"
-        return igbt_prompt
+        # 确保提示词不会过长
+        max_prompt_length = 1500  # 保留一些空间给模型响应
+        if len(custom_prompt) > max_prompt_length:
+            custom_prompt = custom_prompt[:max_prompt_length]
+            
+        prompt = f"USER: <image>\n{custom_prompt}\n\n请根据上述标准选择最符合的类别。仅回复类别名称：\nASSISTANT:"
+        return prompt
         
     def _parse_response(self, response, class_names=None):
         """
         Parse response with better logic to handle various response formats
         """
         scores = {}
-        response_clean = response.strip().lower()
+        response_clean = response.strip()
         
         # Remove any trailing punctuation
         response_clean = re.sub(r'[.!?\s]+$', '', response_clean)
@@ -157,19 +161,17 @@ class LLaVAAdapter(BaseClassifier):
             # For IGBT task, try to extract one of the expected categories
             igbt_categories = ["正常引线键合", "引线断裂", "引线扭曲", "虚焊", "短路", "引线氧化"]
             for category in igbt_categories:
-                if category in response:
+                if category in response_clean:
                     return {category: 1.0}
-            # If none found, return the first part of the response
-            return {response.split()[0] if response.split() else response: 1.0}
+            # If none found, return the response as is
+            return {response_clean: 1.0}
         
         # Try to find exact matches
         match_found = False
         for class_name in class_names:
-            class_name_clean = class_name.lower()
-            # Check for exact match or match with number prefix (e.g., "2. computer" -> "computer")
-            if (class_name_clean == response_clean or 
-                f"{class_name_clean}" == response_clean or
-                class_name_clean in response_clean):
+            class_name_clean = class_name.strip()
+            # Check for exact match
+            if class_name_clean == response_clean:
                 scores[class_name] = 1.0
                 match_found = True
             else:
@@ -178,23 +180,16 @@ class LLaVAAdapter(BaseClassifier):
         # If no exact match, try partial matching
         if not match_found:
             for class_name in class_names:
-                class_name_clean = class_name.lower()
-                # Check if response contains class name or vice versa
-                if (class_name_clean in response_clean or 
-                    response_clean in class_name_clean):
-                    # Calculate similarity based on character overlap
-                    response_set = set(response_clean)
-                    class_set = set(class_name_clean)
-                    if len(response_set) > 0 and len(class_set) > 0:
-                        overlap = len(response_set & class_set) / len(response_set | class_set)
-                        scores[class_name] = min(0.95, max(0.1, overlap))
-                    else:
-                        scores[class_name] = 0.1
+                class_name_clean = class_name.strip()
+                # Check if response contains class name
+                if class_name_clean in response_clean:
+                    scores[class_name] = 0.9
+                    match_found = True
                 else:
                     scores[class_name] = 0.0
         
         # If still no matches, assign equal probabilities
-        if all(score == 0.0 for score in scores.values()):
+        if not match_found:
             for class_name in class_names:
                 scores[class_name] = 1.0 / len(class_names)
                 
@@ -262,6 +257,11 @@ class LLaVAAdapter(BaseClassifier):
                     self._generate_open_vocabulary_prompt() if open_vocabulary else self._generate_prompt_simple(class_names)
                 )
             
+            # Check prompt length and warn if too long
+            tokenized_prompt = self.tokenizer(prompt, return_tensors='pt')
+            if tokenized_prompt.input_ids.shape[1] > 1800:  # Leave room for response
+                print(f"Warning: Prompt for object {idx+1} is very long ({tokenized_prompt.input_ids.shape[1]} tokens). This may affect model performance.")
+            
             # Process single image
             image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
             if type(image_tensor) is list:
@@ -279,7 +279,7 @@ class LLaVAAdapter(BaseClassifier):
                     images=image_tensor,
                     do_sample=False,  # 改为贪婪搜索而非采样
                     num_beams=1,      # 减少beam search数量
-                    max_new_tokens=100,  # 适当增加最大生成token数但不过多
+                    max_new_tokens=20,  # 减少最大生成token数，因为我们只需要类别名称
                     use_cache=True
                 )
                 
@@ -291,21 +291,11 @@ class LLaVAAdapter(BaseClassifier):
             
             if open_vocabulary or use_custom_prompt:
                 # For open vocabulary or custom prompt, parse the response appropriately
-                if use_custom_prompt and ("正常引线键合" in response or "引线断裂" in response or "引线扭曲" in response or 
-                                      "虚焊" in response or "短路" in response or "引线氧化" in response):
-                    # Try to extract one of the IGBT categories
-                    result_class = "正常引线键合"  # Default
-                    for category in ["正常引线键合", "引线断裂", "引线扭曲", "虚焊", "短路", "引线氧化"]:
-                        if category in response:
-                            result_class = category
-                            break
-                else:
-                    # For other cases, use the full response or first part as class
-                    result_class = response.split('\n')[0].strip() if '\n' in response else response
+                result_class = response.split('\n')[0].strip() if '\n' in response else response
                     
                 result = {
                     'class': result_class,
-                    'confidence': 1.0,  # For open vocabulary, we don't compute confidence scores
+                    'confidence': 1.0,
                     'scores': {result_class: 1.0},
                     'mask': mask
                 }
@@ -317,10 +307,10 @@ class LLaVAAdapter(BaseClassifier):
                     print(f"Error parsing response: {response}, error: {e}")
                     # Fallback to simple parsing
                     scores = {}
-                    response_lower = response.lower()
+                    response_stripped = response.strip()
                     match_found = False
                     for class_name in class_names:
-                        if class_name.lower() == response_lower:
+                        if class_name.strip() == response_stripped:
                             scores[class_name] = 1.0
                             match_found = True
                         else:

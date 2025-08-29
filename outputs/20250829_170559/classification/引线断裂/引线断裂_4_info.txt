@@ -1,0 +1,4 @@
+Class: 引线断裂
+Confidence: 1.000
+Scores:
+  引线断裂: 1.000

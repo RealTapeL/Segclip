@@ -1,0 +1,4 @@
+Class: 引线氧化
+Confidence: 1.000
+Scores:
+  引线氧化: 1.000
