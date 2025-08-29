@@ -1,0 +1,4 @@
+Class: Cigarette
+Confidence: 1.000
+Scores:
+  Cigarette: 1.000

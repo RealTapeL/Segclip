@@ -1,0 +1,4 @@
+Class: Guitar
+Confidence: 1.000
+Scores:
+  Guitar: 1.000

@@ -1,0 +1,4 @@
+Class: Vase
+Confidence: 1.000
+Scores:
+  Vase: 1.000

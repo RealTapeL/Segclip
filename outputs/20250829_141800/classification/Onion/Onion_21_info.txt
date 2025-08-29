@@ -1,0 +1,4 @@
+Class: Onion
+Confidence: 1.000
+Scores:
+  Onion: 1.000

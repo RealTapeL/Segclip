@@ -1,0 +1,4 @@
+Class: Tomato
+Confidence: 1.000
+Scores:
+  Tomato: 1.000

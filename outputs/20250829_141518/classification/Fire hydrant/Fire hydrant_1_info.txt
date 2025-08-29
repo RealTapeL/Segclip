@@ -1,0 +1,4 @@
+Class: Fire hydrant
+Confidence: 1.000
+Scores:
+  Fire hydrant: 1.000

@@ -1,4 +1,4 @@
-DEFAULT_IMAGE_PATH="/home/ps/few-shot-research/AdaCLIP/test_image/005.jpg"
+DEFAULT_IMAGE_PATH="/home/ps/few-shot-research/AdaCLIP/test_image/006.jpg"
 
 IMAGE_PATH=${1:-$DEFAULT_IMAGE_PATH}
 
