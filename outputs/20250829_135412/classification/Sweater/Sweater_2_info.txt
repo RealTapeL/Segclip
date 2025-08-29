@@ -1,0 +1,4 @@
+Class: Sweater
+Confidence: 1.000
+Scores:
+  Sweater: 1.000

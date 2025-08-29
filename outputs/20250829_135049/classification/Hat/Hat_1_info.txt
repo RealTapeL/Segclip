@@ -1,0 +1,4 @@
+Class: Hat
+Confidence: 1.000
+Scores:
+  Hat: 1.000

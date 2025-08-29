@@ -1,0 +1,4 @@
+Class: Lamp
+Confidence: 1.000
+Scores:
+  Lamp: 1.000

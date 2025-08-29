@@ -1,0 +1,4 @@
+Class: Tickets
+Confidence: 1.000
+Scores:
+  Tickets: 1.000

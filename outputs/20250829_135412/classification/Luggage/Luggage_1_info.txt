@@ -1,0 +1,4 @@
+Class: Luggage
+Confidence: 1.000
+Scores:
+  Luggage: 1.000

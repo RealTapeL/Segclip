@@ -1,0 +1,4 @@
+Class: Fire
+Confidence: 1.000
+Scores:
+  Fire: 1.000

@@ -1,0 +1,4 @@
+Class: Tattoo
+Confidence: 1.000
+Scores:
+  Tattoo: 1.000

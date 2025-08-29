@@ -1,0 +1,4 @@
+Class: Banner
+Confidence: 1.000
+Scores:
+  Banner: 1.000

@@ -1,0 +1,4 @@
+Class: Pole
+Confidence: 1.000
+Scores:
+  Pole: 1.000

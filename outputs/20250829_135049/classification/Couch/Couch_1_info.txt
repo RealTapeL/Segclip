@@ -1,0 +1,4 @@
+Class: Couch
+Confidence: 1.000
+Scores:
+  Couch: 1.000

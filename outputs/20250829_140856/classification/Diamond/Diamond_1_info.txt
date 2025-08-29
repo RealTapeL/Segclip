@@ -1,0 +1,4 @@
+Class: Diamond
+Confidence: 1.000
+Scores:
+  Diamond: 1.000

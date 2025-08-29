@@ -49,7 +49,7 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
                f"--img_path {image_path} "
                f"--output {fastsam_result_folder}/ "
                f"--conf 0.4 "
-               f"--iou 0.9")
+               f"--iou 0.6")
         
         # Run FastSAM inference
         os.system(cmd)
@@ -235,8 +235,10 @@ def main():
                         default='./samples/sample.jpg',
                         help='Path to input image')
     parser.add_argument('--classes', type=str, nargs='+', 
-                        default=['computer', 'cup', 'pencil'],
-                        help='Class names for classification')
+                        default=None,
+                        help='Class names for classification. If not provided, open vocabulary classification is used.')
+    parser.add_argument('--open_vocabulary', action='store_true',
+                        help='Use open vocabulary classification (equivalent to not providing --classes)')
     parser.add_argument('--fastsam_model', type=str, 
                         default='../FastSAM/weights/FastSAM-x.pt', 
                         help='FastSAM model path')
@@ -248,8 +250,20 @@ def main():
                         help='Device to run inference on')
     parser.add_argument('--conf', type=float, default=0.4, help='Confidence threshold for segmentation')
     parser.add_argument('--iou', type=float, default=0.9, help='IoU threshold for segmentation')
+    parser.add_argument('--max_objects', type=int, default=30, 
+                        help='Maximum number of objects to classify (to avoid too many segments)')
     
     args = parser.parse_args()
+    
+    # Determine if we should use open vocabulary classification
+    use_open_vocabulary = args.open_vocabulary or args.classes is None
+    
+    if use_open_vocabulary:
+        print("Using open vocabulary classification - LLaVA will determine object classes automatically")
+        class_names = None
+    else:
+        print(f"Using specified classes: {args.classes}")
+        class_names = args.classes
     
     print(f"Using LLaVA model: {args.llava_model}")
     
@@ -272,6 +286,11 @@ def main():
     seg_result = segmentor.segment(image)
     masks = segmentor.postprocess(seg_result, np.array(image))
     
+    # Limit number of masks if needed
+    if len(masks) > args.max_objects:
+        print(f"Limiting number of objects from {len(masks)} to {args.max_objects}")
+        masks = masks[:args.max_objects]
+    
     # Save segmentation results regardless of what happens next
     try:
         save_segmentation_results(args.image_path, seg_result, masks, args.fastsam_model, output_path, timestamp)
@@ -283,7 +302,12 @@ def main():
     
     # Run full pipeline for classification
     try:
-        results = pipeline.run(args.image_path, args.classes)
+        results = pipeline.run(args.image_path, class_names)
+        
+        # Limit number of results if needed
+        if len(results) > args.max_objects:
+            print(f"Limiting number of classification results from {len(results)} to {args.max_objects}")
+            results = results[:args.max_objects]
         
         # Save classification results
         save_classification_results(args.image_path, results, output_path, timestamp)

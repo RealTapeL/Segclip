@@ -1,0 +1,4 @@
+Class: Lifesaver
+Confidence: 1.000
+Scores:
+  Lifesaver: 1.000

@@ -1,0 +1,4 @@
+Class: Billboard
+Confidence: 1.000
+Scores:
+  Billboard: 1.000

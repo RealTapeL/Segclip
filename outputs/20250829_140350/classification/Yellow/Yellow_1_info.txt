@@ -1,0 +1,4 @@
+Class: Yellow
+Confidence: 1.000
+Scores:
+  Yellow: 1.000

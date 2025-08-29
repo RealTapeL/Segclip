@@ -1,0 +1,4 @@
+Class: Sinkhole
+Confidence: 1.000
+Scores:
+  Sinkhole: 1.000

@@ -1,0 +1,4 @@
+Class: Sign
+Confidence: 1.000
+Scores:
+  Sign: 1.000

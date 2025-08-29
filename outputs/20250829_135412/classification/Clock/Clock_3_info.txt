@@ -1,0 +1,4 @@
+Class: Clock
+Confidence: 1.000
+Scores:
+  Clock: 1.000

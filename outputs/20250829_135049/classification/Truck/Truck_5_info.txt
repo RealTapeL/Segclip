@@ -1,0 +1,4 @@
+Class: Truck
+Confidence: 1.000
+Scores:
+  Truck: 1.000

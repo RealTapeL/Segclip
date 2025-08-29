@@ -1,0 +1,4 @@
+Class: Logo
+Confidence: 1.000
+Scores:
+  Logo: 1.000

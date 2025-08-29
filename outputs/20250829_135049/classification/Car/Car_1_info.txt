@@ -1,0 +1,4 @@
+Class: Car
+Confidence: 1.000
+Scores:
+  Car: 1.000

@@ -1,0 +1,4 @@
+Class: Scale
+Confidence: 1.000
+Scores:
+  Scale: 1.000

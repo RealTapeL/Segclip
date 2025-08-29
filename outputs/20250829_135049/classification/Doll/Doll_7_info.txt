@@ -1,0 +1,4 @@
+Class: Doll
+Confidence: 1.000
+Scores:
+  Doll: 1.000

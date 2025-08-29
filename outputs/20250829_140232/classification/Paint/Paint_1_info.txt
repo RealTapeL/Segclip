@@ -1,0 +1,4 @@
+Class: Paint
+Confidence: 1.000
+Scores:
+  Paint: 1.000

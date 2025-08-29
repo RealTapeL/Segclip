@@ -1,0 +1,4 @@
+Class: Jacket
+Confidence: 1.000
+Scores:
+  Jacket: 1.000

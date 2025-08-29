@@ -1,0 +1,4 @@
+Class: Duck
+Confidence: 1.000
+Scores:
+  Duck: 1.000

@@ -1,0 +1,4 @@
+Class: BLEND
+Confidence: 1.000
+Scores:
+  BLEND: 1.000

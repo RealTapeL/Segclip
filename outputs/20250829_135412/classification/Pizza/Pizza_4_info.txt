@@ -1,0 +1,4 @@
+Class: Pizza
+Confidence: 1.000
+Scores:
+  Pizza: 1.000

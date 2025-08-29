@@ -7,7 +7,7 @@ class SegCLIPPipeline:
         self.segmentor = segmentor
         self.classifier = classifier
         
-    def run(self, image_path, class_names):
+    def run(self, image_path, class_names=None):
         # Load image
         image = Image.open(image_path).convert('RGB')
         
@@ -54,7 +54,7 @@ class SegCLIPPipeline:
         
         return results
         
-    def update_memory_bank(self, image_path, class_names, ground_truth_labels):
+    def update_memory_bank(self, image_path, class_names=None, ground_truth_labels=None):
         """
         Update memory bank with labeled samples
         """

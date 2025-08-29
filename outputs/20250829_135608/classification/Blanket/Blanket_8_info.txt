@@ -1,0 +1,4 @@
+Class: Blanket
+Confidence: 1.000
+Scores:
+  Blanket: 1.000

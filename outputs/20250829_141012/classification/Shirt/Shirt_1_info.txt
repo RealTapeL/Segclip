@@ -1,0 +1,4 @@
+Class: Shirt
+Confidence: 1.000
+Scores:
+  Shirt: 1.000

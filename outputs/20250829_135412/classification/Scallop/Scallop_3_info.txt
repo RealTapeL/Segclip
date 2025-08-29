@@ -1,0 +1,4 @@
+Class: Scallop
+Confidence: 1.000
+Scores:
+  Scallop: 1.000

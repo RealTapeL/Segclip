@@ -1,0 +1,4 @@
+Class: Pillow
+Confidence: 1.000
+Scores:
+  Pillow: 1.000

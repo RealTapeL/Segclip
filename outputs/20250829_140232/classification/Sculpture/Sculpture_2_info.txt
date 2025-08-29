@@ -1,0 +1,4 @@
+Class: Sculpture
+Confidence: 1.000
+Scores:
+  Sculpture: 1.000

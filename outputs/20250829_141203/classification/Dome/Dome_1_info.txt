@@ -1,0 +1,4 @@
+Class: Dome
+Confidence: 1.000
+Scores:
+  Dome: 1.000

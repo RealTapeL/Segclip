@@ -1,0 +1,4 @@
+Class: Duffel bag
+Confidence: 1.000
+Scores:
+  Duffel bag: 1.000

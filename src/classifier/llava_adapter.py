@@ -127,6 +127,13 @@ class LLaVAAdapter(BaseClassifier):
         prompt = f"USER: <image>\nCarefully analyze this image and identify what object is shown. Select the single most likely category from the following list: {class_list}. Respond with ONLY the category name. Do not include any other text or explanation.\nASSISTANT:"
         return prompt
         
+    def _generate_open_vocabulary_prompt(self):
+        """
+        Generate prompt for open vocabulary classification
+        """
+        prompt = "USER: <image>\nCarefully analyze this image and identify what single object is shown. Respond with ONLY the object name in a single word or short phrase. Do not include any other text or explanation.\nASSISTANT:"
+        return prompt
+        
     def _parse_response(self, response, class_names):
         """
         Parse response with better logic to handle various response formats
@@ -175,10 +182,13 @@ class LLaVAAdapter(BaseClassifier):
                 
         return scores
         
-    def classify(self, image, masks, class_names):
+    def classify(self, image, masks, class_names=None):
         """
         Classify masked regions using LLaVA with improved prompts and parsing
         """
+        # If class_names is None, we perform open vocabulary classification
+        open_vocabulary = class_names is None
+        
         results = []
         
         # Handle case where masks is a single mask
@@ -199,7 +209,8 @@ class LLaVAAdapter(BaseClassifier):
         # 使用简单提示避免编号混淆
         for i, mask in enumerate(masks):
             # 生成缓存键
-            cache_key = self._get_cache_key(image_array, mask, class_names, "simple_prompt")
+            cache_key = self._get_cache_key(image_array, mask, class_names if class_names else [], 
+                                          "open_vocab" if open_vocabulary else "simple_prompt")
             cache_keys.append(cache_key)
             
             # 检查缓存
@@ -211,13 +222,18 @@ class LLaVAAdapter(BaseClassifier):
             pil_image = self._prepare_masked_image(image_array, mask)
             pil_images.append((i, pil_image, mask, cache_key))  # 保存索引信息
             
-            # Use simple prompt without numbering
-            prompt = self._generate_prompt_simple(class_names)
+            # Use appropriate prompt
+            if open_vocabulary:
+                prompt = self._generate_open_vocabulary_prompt()
+            else:
+                prompt = self._generate_prompt_simple(class_names)
             prompts_list.append(prompt)
         
         # 对未缓存的图像进行批量处理
         for idx, (original_index, pil_image, mask, cache_key) in enumerate(pil_images):
-            prompt = prompts_list[idx] if idx < len(prompts_list) else self._generate_prompt_simple(class_names)
+            prompt = prompts_list[idx] if idx < len(prompts_list) else (
+                self._generate_open_vocabulary_prompt() if open_vocabulary else self._generate_prompt_simple(class_names)
+            )
             
             # Process single image
             image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
@@ -246,36 +262,45 @@ class LLaVAAdapter(BaseClassifier):
             # 输出LLaVA的原始回复到终端
             print(f"LLaVA Raw Response for object {idx+1}: '{response}'")
             
-            # Parse response with improved parser
-            try:
-                scores = self._parse_response(response, class_names)
-            except Exception as e:
-                print(f"Error parsing response: {response}, error: {e}")
-                # Fallback to simple parsing
-                scores = {}
-                response_lower = response.lower()
-                match_found = False
-                for class_name in class_names:
-                    if class_name.lower() == response_lower:
-                        scores[class_name] = 1.0
-                        match_found = True
-                    else:
-                        scores[class_name] = 0.0
-                
-                if not match_found:
+            if open_vocabulary:
+                # For open vocabulary, we just return the response as the class
+                result = {
+                    'class': response,
+                    'confidence': 1.0,  # For open vocabulary, we don't compute confidence scores
+                    'scores': {response: 1.0},
+                    'mask': mask
+                }
+            else:
+                # Parse response with improved parser
+                try:
+                    scores = self._parse_response(response, class_names)
+                except Exception as e:
+                    print(f"Error parsing response: {response}, error: {e}")
+                    # Fallback to simple parsing
+                    scores = {}
+                    response_lower = response.lower()
+                    match_found = False
                     for class_name in class_names:
-                        scores[class_name] = 1.0 / len(class_names)
-            
-            # Select class with highest score
-            best_class = max(scores, key=scores.get)
-            confidence = scores[best_class]
-            
-            result = {
-                'class': best_class,
-                'confidence': confidence,
-                'scores': scores,
-                'mask': mask
-            }
+                        if class_name.lower() == response_lower:
+                            scores[class_name] = 1.0
+                            match_found = True
+                        else:
+                            scores[class_name] = 0.0
+                    
+                    if not match_found:
+                        for class_name in class_names:
+                            scores[class_name] = 1.0 / len(class_names)
+                
+                # Select class with highest score
+                best_class = max(scores, key=scores.get)
+                confidence = scores[best_class]
+                
+                result = {
+                    'class': best_class,
+                    'confidence': confidence,
+                    'scores': scores,
+                    'mask': mask
+                }
             
             # 缓存结果
             self.response_cache[cache_key] = result

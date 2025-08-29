@@ -1,0 +1,4 @@
+Class: Paper
+Confidence: 1.000
+Scores:
+  Paper: 1.000

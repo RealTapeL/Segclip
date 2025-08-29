@@ -1,0 +1,4 @@
+Class: Boots
+Confidence: 1.000
+Scores:
+  Boots: 1.000

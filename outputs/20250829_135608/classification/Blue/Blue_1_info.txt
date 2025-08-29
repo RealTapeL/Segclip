@@ -1,0 +1,4 @@
+Class: Blue
+Confidence: 1.000
+Scores:
+  Blue: 1.000
