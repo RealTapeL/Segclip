@@ -31,7 +31,7 @@ def parse_args():
         "--text_prompt", type=str, default=None, help='use text prompt eg: "a dog"'
     )
     parser.add_argument(
-        "--conf", type=float, default=0.4, help="object confidence threshold"
+        "--conf", type=float, default=0.8, help="object confidence threshold"
     )
     parser.add_argument(
         "--output", type=str, default="./output/", help="image save path"
@@ -110,9 +110,21 @@ def main(args):
         point_label = args.point_label
     else:
         ann = prompt_process.everything_prompt()
+        
+    # 确保输出目录存在
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    
+    # 生成输出文件路径
+    img_name = os.path.basename(args.img_path)
+    name, ext = os.path.splitext(img_name)
+    output_path = os.path.join(args.output, f"{name}_segmented{ext}")
+    
+    print(f"Saving segmented image to: {output_path}")
+    
     prompt_process.plot(
         annotations=ann,
-        output_path=args.output+args.img_path.split("/")[-1],
+        output_path=output_path,
         bboxes = bboxes,
         points = points,
         point_label = point_label,
@@ -120,13 +132,12 @@ def main(args):
         better_quality=args.better_quality,
     )
 
-
-
+    # 添加确认信息
+    if os.path.exists(output_path):
+        print(f"Segmented image successfully saved to: {output_path}")
+    else:
+        print("Error: Failed to save segmented image")
 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
-
-
-
-# python Inference.py --model_path ./weights/FastSAM.pt --img_path /home/ps/FastSAM/igbt/image4.png --imgsz 720

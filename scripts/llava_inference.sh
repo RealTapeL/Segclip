@@ -1,5 +1,3 @@
-#!/bin/bash
-
 python /home/ps/few-shot-research/mcxh_img/SegClip/scripts/llava_inference.py \
   --image_path /home/ps/few-shot-research/mcxh_img/SegClip/asserts/desk.jpg \
   --classes computer glass_bottle \

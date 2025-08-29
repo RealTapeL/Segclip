@@ -33,6 +33,48 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
     os.makedirs(original_folder, exist_ok=True)
     original_image.save(os.path.join(original_folder, 'input_image.jpg'))
     
+    # Save FastSAM raw results (the actual FastSAM inference results)
+    fastsam_result_folder = os.path.join(segmentation_folder, 'fastsam_inference')
+    os.makedirs(fastsam_result_folder, exist_ok=True)
+    
+    # Save FastSAM visualization using direct FastSAM inference - the correct way
+    if seg_result and len(seg_result) > 0:
+        # Use the fastsam_inference module to generate the original FastSAM result
+        fastsam_output_path = os.path.join(fastsam_result_folder, 'fastsam_segmentation.png')
+        
+        # Build command to run FastSAM inference
+        fastsam_inference_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'segmentor', 'fastsam_inference.py')
+        cmd = (f"python {fastsam_inference_path} "
+               f"--model_path {fastsam_model} "
+               f"--img_path {image_path} "
+               f"--output {fastsam_result_folder}/ "
+               f"--conf 0.4 "
+               f"--iou 0.9")
+        
+        # Run FastSAM inference
+        os.system(cmd)
+        
+        # Rename the output file to our standard name
+        # FastSAM inference saves with the same name as input, so we need to rename it
+        input_filename = os.path.basename(image_path)
+        name, ext = os.path.splitext(input_filename)
+        generated_file = os.path.join(fastsam_result_folder, f"{name}_segmented{ext}")
+        if os.path.exists(generated_file):
+            target_file = os.path.join(fastsam_result_folder, 'fastsam_segmentation.png')
+            if os.path.exists(target_file):
+                os.remove(target_file)
+            os.rename(generated_file, target_file)
+            print(f"FastSAM segmentation result saved to: {target_file}")
+        else:
+            # Try the original filename if _segmented version doesn't exist
+            generated_file = os.path.join(fastsam_result_folder, input_filename)
+            if os.path.exists(generated_file):
+                target_file = os.path.join(fastsam_result_folder, 'fastsam_segmentation.png')
+                if os.path.exists(target_file):
+                    os.remove(target_file)
+                os.rename(generated_file, target_file)
+                print(f"FastSAM segmentation result saved to: {target_file}")
+    
     # Save individual masks
     for i, mask_data in enumerate(masks):
         # Handle different mask formats
@@ -117,6 +159,9 @@ def save_segmentation_results(image_path, seg_result, masks, fastsam_model, outp
     if os.path.exists(masks_folder):
         mask_files = os.listdir(masks_folder)
         print(f"Number of mask files saved: {len(mask_files)}")
+    if os.path.exists(fastsam_result_folder):
+        fastsam_files = os.listdir(fastsam_result_folder)
+        print(f"FastSAM result files: {fastsam_files}")
 
 def save_classification_results(image_path, results, output_root, timestamp):
     """
