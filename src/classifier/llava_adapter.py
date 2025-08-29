@@ -7,11 +7,14 @@ from .base_classifier import BaseClassifier
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 import re
+import hashlib
+import json
 
 class LLaVAAdapter(BaseClassifier):
     def __init__(self, model_path='/home/ps/llava-v1.5-7b', device='cuda'):
         self.device = device
         self.model_path = model_path
+        self.response_cache = {}  # 缓存字典
         
         try:
             # Get the llava module path
@@ -27,7 +30,12 @@ class LLaVAAdapter(BaseClassifier):
             import llava.constants
             
             # Load the model in offline mode
-            os.environ['HF_HUB_OFFLINE'] = '1'
+            # 只有在模型文件存在时才设置离线模式
+            if os.path.exists(model_path):
+                os.environ['HF_HUB_OFFLINE'] = '1'
+            else:
+                print(f"Model path {model_path} not found, will try to download from HuggingFace")
+                
             self.tokenizer, self.model, self.image_processor, self.context_len = llava.model.builder.load_pretrained_model(
                 model_path, None, 'llava', False, False, device_map="auto", device=device
             )
@@ -47,10 +55,22 @@ class LLaVAAdapter(BaseClassifier):
             
     def load_model(self, config):
         pass
-        
+
     def preprocess(self, image):
         """Preprocess image for LLaVA"""
         return image
+        
+    def _get_cache_key(self, image_array, mask, class_names, prompt):
+        """生成缓存键"""
+        # 将图像和mask转换为bytes用于哈希
+        image_bytes = image_array.tobytes()
+        mask_bytes = mask.tobytes() if mask is not None else b''
+        class_names_str = ','.join(sorted(class_names))
+        
+        # 创建唯一标识符
+        key_data = image_bytes + mask_bytes + class_names_str.encode() + prompt.encode()
+        cache_key = hashlib.md5(key_data).hexdigest()
+        return cache_key
         
     def _prepare_masked_image(self, image, mask):
         """
@@ -99,124 +119,65 @@ class LLaVAAdapter(BaseClassifier):
         pil_image = Image.fromarray(cropped_image.astype('uint8'))
         return pil_image
         
-    def _generate_prompt_v1(self, class_names):
+    def _generate_prompt_simple(self, class_names):
         """
-        Original prompt - simple classification
-        """
-        class_list = ", ".join(class_names)
-        prompt = f"USER: <image>\nIdentify what is in this image. Select one from the following categories: {class_list}. Answer with just the category name.\nASSISTANT:"
-        return prompt
-        
-    def _generate_prompt_v2(self, class_names):
-        """
-        Improved prompt - request confidence scores
+        Simple prompt without numbered list to avoid confusion
         """
         class_list = ", ".join(class_names)
-        prompt = f"USER: <image>\nIdentify what is in this image. Select one from the following categories: {class_list}. Answer with the category name and a confidence score between 0 and 1 in the format 'category_name:confidence_score'. For example, 'computer:0.95'.\nASSISTANT:"
+        prompt = f"USER: <image>\nCarefully analyze this image and identify what object is shown. Select the single most likely category from the following list: {class_list}. Respond with ONLY the category name. Do not include any other text or explanation.\nASSISTANT:"
         return prompt
         
-    def _generate_prompt_v3(self, class_names):
+    def _parse_response(self, response, class_names):
         """
-        Advanced prompt - request probabilities for all classes
+        Parse response with better logic to handle various response formats
         """
-        class_list = ", ".join(class_names)
-        prompt = f"USER: <image>\nWhat is in this image? Provide confidence scores between 0 and 1 for each of the following categories: {class_list}. Answer in the format 'category1:score1,category2:score2,...'. For example, 'computer:0.95,glass_bottle:0.1'.\nASSISTANT:"
-        return prompt
-        
-    def _parse_v2_response(self, response, class_names):
-        """
-        Parse response from prompt v2 (single class with confidence)
-        """
-        # Try to extract class and confidence in format "class:confidence"
-        match = re.search(r'([^:]+):(\d*\.?\d+)', response.strip())
-        if match:
-            predicted_class = match.group(1).strip()
-            try:
-                confidence = float(match.group(2))
-                # Normalize confidence to be between 0 and 1
-                confidence = max(0.0, min(1.0, confidence))
-                
-                # Create scores dictionary
-                scores = {}
-                for class_name in class_names:
-                    if class_name.lower() == predicted_class.lower():
-                        scores[class_name] = confidence
-                    else:
-                        scores[class_name] = (1.0 - confidence) / (len(class_names) - 1) if len(class_names) > 1 else 0.0
-                
-                return scores
-            except ValueError:
-                pass
-        
-        # Fallback to simple matching
         scores = {}
-        response_lower = response.lower()
+        response_clean = response.strip().lower()
+        
+        # Remove any trailing punctuation
+        response_clean = re.sub(r'[.!?\s]+$', '', response_clean)
+        
+        # Try to find exact matches
         match_found = False
         for class_name in class_names:
-            if class_name.lower() in response_lower:
+            class_name_clean = class_name.lower()
+            # Check for exact match or match with number prefix (e.g., "2. computer" -> "computer")
+            if (class_name_clean == response_clean or 
+                f"{class_name_clean}" == response_clean or
+                class_name_clean in response_clean):
                 scores[class_name] = 1.0
                 match_found = True
             else:
                 scores[class_name] = 0.0
         
+        # If no exact match, try partial matching
         if not match_found:
-            # If no match, assign equal probability
+            for class_name in class_names:
+                class_name_clean = class_name.lower()
+                # Check if response contains class name or vice versa
+                if (class_name_clean in response_clean or 
+                    response_clean in class_name_clean):
+                    # Calculate similarity based on character overlap
+                    response_set = set(response_clean)
+                    class_set = set(class_name_clean)
+                    if len(response_set) > 0 and len(class_set) > 0:
+                        overlap = len(response_set & class_set) / len(response_set | class_set)
+                        scores[class_name] = min(0.95, max(0.1, overlap))
+                    else:
+                        scores[class_name] = 0.1
+                else:
+                    scores[class_name] = 0.0
+        
+        # If still no matches, assign equal probabilities
+        if all(score == 0.0 for score in scores.values()):
             for class_name in class_names:
                 scores[class_name] = 1.0 / len(class_names)
                 
         return scores
         
-    def _parse_v3_response(self, response, class_names):
-        """
-        Parse response from prompt v3 (multiple classes with confidences)
-        """
-        scores = {}
-        
-        # Try to parse format "class1:score1,class2:score2,..."
-        pairs = response.split(',')
-        parsed_scores = {}
-        for pair in pairs:
-            if ':' in pair:
-                try:
-                    class_part, score_part = pair.split(':', 1)
-                    class_name = class_part.strip()
-                    score = float(score_part.strip())
-                    parsed_scores[class_name] = max(0.0, min(1.0, score))  # Normalize to [0,1]
-                except ValueError:
-                    continue
-        
-        # Match parsed classes with our class names
-        for class_name in class_names:
-            matched = False
-            for parsed_class, parsed_score in parsed_scores.items():
-                if class_name.lower() == parsed_class.lower():
-                    scores[class_name] = parsed_score
-                    matched = True
-                    break
-            if not matched:
-                scores[class_name] = 0.0  # Default to 0 if not mentioned
-        
-        # If no scores were parsed, fallback to simple matching
-        if all(score == 0.0 for score in scores.values()):
-            response_lower = response.lower()
-            match_found = False
-            for class_name in class_names:
-                if class_name.lower() in response_lower:
-                    scores[class_name] = 1.0
-                    match_found = True
-                else:
-                    scores[class_name] = 0.0
-            
-            if not match_found:
-                # If no match, assign equal probability
-                for class_name in class_names:
-                    scores[class_name] = 1.0 / len(class_names)
-        
-        return scores
-        
     def classify(self, image, masks, class_names):
         """
-        Classify masked regions using LLaVA
+        Classify masked regions using LLaVA with improved prompts and parsing
         """
         results = []
         
@@ -224,87 +185,78 @@ class LLaVAAdapter(BaseClassifier):
         if not isinstance(masks, list):
             masks = [masks]
             
+        # Convert image to numpy array if it's a tensor
+        if isinstance(image, torch.Tensor):
+            image_array = image.cpu().numpy()
+        else:
+            image_array = np.array(image)
+            
+        # 批量处理所有mask
+        pil_images = []
+        cache_keys = []
+        prompts_list = []
+        
+        # 使用简单提示避免编号混淆
         for i, mask in enumerate(masks):
+            # 生成缓存键
+            cache_key = self._get_cache_key(image_array, mask, class_names, "simple_prompt")
+            cache_keys.append(cache_key)
+            
+            # 检查缓存
+            if cache_key in self.response_cache:
+                results.append(self.response_cache[cache_key])
+                continue
+                
             # Prepare masked image
-            pil_image = self._prepare_masked_image(np.array(image), mask)
+            pil_image = self._prepare_masked_image(image_array, mask)
+            pil_images.append((i, pil_image, mask, cache_key))  # 保存索引信息
             
-            # Try different prompts in order of complexity
-            prompts = [
-                self._generate_prompt_v3(class_names),  # Most detailed prompt
-                self._generate_prompt_v2(class_names),  # Prompt with confidence
-                self._generate_prompt_v1(class_names)   # Simple prompt
-            ]
+            # Use simple prompt without numbering
+            prompt = self._generate_prompt_simple(class_names)
+            prompts_list.append(prompt)
+        
+        # 对未缓存的图像进行批量处理
+        for idx, (original_index, pil_image, mask, cache_key) in enumerate(pil_images):
+            prompt = prompts_list[idx] if idx < len(prompts_list) else self._generate_prompt_simple(class_names)
             
-            scores = None
-            best_response = ""
-            
-            # Try each prompt until we get a parseable response
-            for prompt in prompts:
-                # Process image
-                image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
-                if type(image_tensor) is list:
-                    image_tensor = [image.to(self.model.device, dtype=torch.float16) for image in image_tensor]
-                else:
-                    image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
-                    
-                # Tokenize prompt
-                input_ids = self.tokenizer_image_token(prompt, self.tokenizer, self.IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+            # Process single image
+            image_tensor = self.process_images([pil_image], self.image_processor, self.model.config)
+            if type(image_tensor) is list:
+                image_tensor = [image.to(self.model.device, dtype=torch.float16) for image in image_tensor]
+            else:
+                image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
                 
-                # Generate output
-                with torch.inference_mode():
-                    output_ids = self.model.generate(
-                        input_ids,
-                        images=image_tensor,
-                        do_sample=True,
-                        temperature=0.2,
-                        max_new_tokens=256,
-                        use_cache=True
-                    )
-                    
-                # Decode output
-                response = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-                best_response = response  # Save for potential fallback
-                
-                # Try to parse the response
-                try:
-                    if "Provide confidence scores" in prompt:  # v3 prompt
-                        scores = self._parse_v3_response(response, class_names)
-                    elif "confidence score between 0 and 1" in prompt:  # v2 prompt
-                        scores = self._parse_v2_response(response, class_names)
-                    else:  # v1 prompt
-                        # Simple matching for v1
-                        scores = {}
-                        response_lower = response.lower()
-                        match_found = False
-                        for class_name in class_names:
-                            if class_name.lower() == response_lower:
-                                scores[class_name] = 1.0
-                                match_found = True
-                            else:
-                                scores[class_name] = 0.0
-                        
-                        if not match_found:
-                            # Partial matching
-                            for class_name in class_names:
-                                if class_name.lower() in response_lower:
-                                    scores[class_name] = 0.8
-                                else:
-                                    scores[class_name] = 0.1
-                    
-                    # If we successfully got scores, break
-                    if scores is not None:
-                        break
-                except Exception as e:
-                    # Continue to next prompt if parsing fails
-                    continue
+            # Tokenize prompt
+            input_ids = self.tokenizer_image_token(prompt, self.tokenizer, self.IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
             
-            # Fallback if no prompt worked
-            if scores is None:
+            # Generate output with optimized parameters
+            with torch.inference_mode():
+                output_ids = self.model.generate(
+                    input_ids,
+                    images=image_tensor,
+                    do_sample=False,  # 改为贪婪搜索而非采样
+                    num_beams=1,      # 减少beam search数量
+                    max_new_tokens=50,  # 减少最大生成token数
+                    use_cache=True
+                )
+                
+            # Decode output
+            response = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+            
+            # 输出LLaVA的原始回复到终端
+            print(f"LLaVA Raw Response for object {idx+1}: '{response}'")
+            
+            # Parse response with improved parser
+            try:
+                scores = self._parse_response(response, class_names)
+            except Exception as e:
+                print(f"Error parsing response: {response}, error: {e}")
+                # Fallback to simple parsing
                 scores = {}
-                response_lower = best_response.lower()
+                response_lower = response.lower()
                 match_found = False
                 for class_name in class_names:
-                    if class_name.lower() in response_lower:
+                    if class_name.lower() == response_lower:
                         scores[class_name] = 1.0
                         match_found = True
                     else:
@@ -318,11 +270,19 @@ class LLaVAAdapter(BaseClassifier):
             best_class = max(scores, key=scores.get)
             confidence = scores[best_class]
             
-            results.append({
+            result = {
                 'class': best_class,
                 'confidence': confidence,
                 'scores': scores,
                 'mask': mask
-            })
+            }
+            
+            # 缓存结果
+            self.response_cache[cache_key] = result
+            results.append(result)
+            
+            # 显存优化：在每次迭代后清理缓存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
         return results
